@@ -124,8 +124,16 @@ if source is not None:
         teams = sorted(preview_df["team"].unique())
         if grades_source is not None:
             filled, grade_problems = g.load_team_grades(grades_source, teams)
-            for p in grade_problems:
-                st.warning(p, icon="⚠️")
+            if grade_problems and grades_source == STRESS_TEAM_GRADES:
+                # The stress-test file is broken on purpose, so these are expected
+                with st.expander(f"✅ The checks caught {len(grade_problems)} problems in "
+                                 f"{STRESS_TEAM_GRADES}, as expected (this file is broken "
+                                 "on purpose)"):
+                    for p in grade_problems:
+                        st.warning(p, icon="⚠️")
+            else:
+                for p in grade_problems:
+                    st.warning(p, icon="⚠️")
         else:
             filled = {t: g.DEFAULT_PROJECT_GRADE for t in teams}
 

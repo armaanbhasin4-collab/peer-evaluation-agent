@@ -153,4 +153,4 @@ Screenshots marked *(mock)* are from mock mode; the rest are from a real AI run.
 | Grades file unlocked *(mock)* | ![](docs/screenshots/4b_review_unlocked.png) |
 | Feedback drafts | ![](docs/screenshots/5_feedback.png) |
 | Cost | ![](docs/screenshots/6_cost.png) |
-| Stress-test data and team grade warnings *(mock)* | ![](docs/screenshots/7_stress_button.png) |
+| Stress-test data loaded *(mock)* | ![](docs/screenshots/7_stress_button.png) |
