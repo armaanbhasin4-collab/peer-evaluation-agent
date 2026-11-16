@@ -1,0 +1,13 @@
+# Secrets - never commit your API key
+.env
+
+# Files the app writes when you run it
+adjusted_grades.csv
+flags_report.txt
+approved_feedback.txt
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

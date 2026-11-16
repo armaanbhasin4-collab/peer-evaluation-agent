@@ -1,0 +1,382 @@
+"""
+Peer Evaluation Agent
+---------------------
+Upload peer evaluations, enter the group grade, click "Run Agent".
+
+Files:
+  app.py        - this file: the web page
+  grading.py    - grade math (no AI)
+  ai_review.py  - flags + feedback drafts (mock rules or a real AI model)
+
+Run it with:   streamlit run app.py
+"""
+
+import html
+
+import requests
+import streamlit as st
+from dotenv import load_dotenv
+
+import ai_review as ai
+import grading as g
+
+load_dotenv()  # reads OPENROUTER_API_KEY and OPENROUTER_MODEL from .env
+API_KEY, MODEL = ai.get_settings()
+
+STRESS_FILE = "stress_test.csv"
+GRADES_FILE = "adjusted_grades.csv"
+REPORT_FILE = "flags_report.txt"
+PAID_TOOL_PRICE = 9.50  # dollars per student for the paid peer-evaluation tool
+
+st.set_page_config(page_title="Peer Evaluation Agent", page_icon="📝", layout="wide")
+st.markdown("""
+<style>
+.block-container {padding-top: 2rem;}
+.flag-type {font-weight:700; color:#C2410C; text-transform:uppercase;
+            font-size:0.8rem; letter-spacing:0.05em;}
+.note {background:#EEF2FF; border-left:5px solid #4F46E5; padding:0.7rem 1rem;
+       border-radius:8px; margin-bottom:0.8rem;}
+</style>""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Sidebar: mode and limits
+# ---------------------------------------------------------------------------
+
+with st.sidebar:
+    st.header("⚙️ Settings")
+    mock_mode = st.toggle("Mock mode (free, no API calls)", value=True)
+    if mock_mode:
+        st.caption("Flags and feedback come from simple built-in rules. Nothing leaves "
+                   "your computer.")
+    else:
+        st.caption(f"Real mode: each team is sent to **{MODEL}** via OpenRouter.")
+        if not API_KEY:
+            st.error("No OPENROUTER_API_KEY in your .env file.")
+    st.subheader("API limits")
+    st.caption(f"• Max {ai.MAX_API_CALLS_PER_RUN} AI calls per run  \n"
+               f"• Stops at ${ai.MAX_COST_PER_RUN:.2f} per run  \n"
+               f"• Max {ai.MAX_OUTPUT_TOKENS} tokens per reply  \n"
+               f"• Comments cut to {ai.MAX_COMMENT_CHARS} characters  \n"
+               f"• Max {g.MAX_ROWS} rows per file")
+
+
+# ---------------------------------------------------------------------------
+# Inputs
+# ---------------------------------------------------------------------------
+
+st.title("📝 Peer Evaluation Agent")
+st.write("Upload your students' peer evaluations, enter the group grade, and let the agent "
+         "compute fair grades, flag problems, and draft feedback for you to review.")
+
+col1, col2 = st.columns([2, 1])
+with col1:
+    uploaded = st.file_uploader("Peer evaluations CSV", type="csv")
+    if st.button("🧪 Load stress-test data"):
+        st.session_state["use_stress"] = True
+with col2:
+    group_grade = st.number_input("Group grade", min_value=0.0, max_value=100.0,
+                                  value=85.0, step=1.0)
+
+source = None
+if uploaded is not None:
+    source, source_name = uploaded, uploaded.name
+elif st.session_state.get("use_stress"):
+    source, source_name = STRESS_FILE, STRESS_FILE
+if source is not None:
+    st.info(f"Using **{source_name}**"
+            + (" — every edge case: freeloader, retaliation, prompt injections, collusion, "
+               "score/comment mismatch, self-inflation, bad scores, duplicates, blank rows."
+               if source_name == STRESS_FILE else ""))
+
+run = st.button("🤖 Run Agent", type="primary", disabled=source is None)
+
+
+# ---------------------------------------------------------------------------
+# The agent
+# ---------------------------------------------------------------------------
+
+def run_agent(source, group_grade, mock_mode):
+    with st.status("Agent is working...", expanded=True) as status:
+        st.write("**Step 1:** Loading and cleaning the CSV...")
+        df, problems = g.load_evaluations(source)
+        for p in problems:
+            st.write(f"⚠️ {p}")
+        st.write(f"✅ {len(df)} usable ratings for "
+                 f"{g.peer_ratings(df)['evaluatee'].nunique()} students.")
+
+        st.write("**Step 2:** Checking for retaliation and computing grades...")
+        outliers = g.find_outlier_evaluators(df)
+        grades_before = g.compute_grades(df, group_grade)
+        grades = g.compute_grades(df, group_grade, exclude=outliers)
+        for (team, evaluator), gap in outliers.items():
+            st.write(f"⚠️ Left out {evaluator}'s ratings (team {team}): "
+                     f"{abs(gap)} points below teammates.")
+        st.write(f"✅ Grades computed. {int(grades['below_floor'].sum())} grade(s) "
+                 "below the 50% floor need your confirmation.")
+
+        label = "rules (mock mode)" if mock_mode else MODEL
+        st.write(f"**Step 3:** Reviewing comments with {label}...")
+        flags, feedback, total_cost, calls = [], {}, 0.0, 0
+        for team, rows in df.groupby("team"):
+            team_outliers = {e: gap for (t, e), gap in outliers.items() if t == team}
+            rule_flags, rule_fb, cost = ai.review_team_mock(rows, team_outliers)
+            for f in rule_flags:
+                f["source"] = "rules"
+            if mock_mode:
+                team_flags, team_fb = rule_flags, rule_fb
+            elif calls >= ai.MAX_API_CALLS_PER_RUN or total_cost >= ai.MAX_COST_PER_RUN:
+                st.write(f"⛔ Team {team}: API limit reached, using rules only.")
+                team_flags, team_fb = rule_flags, rule_fb
+            else:
+                ai_flags, team_fb, cost = ai.review_team_ai(team, rows, team_outliers,
+                                                            API_KEY, MODEL)
+                calls += 1
+                if ai_flags is None:
+                    st.write(f"⚠️ Team {team}: the AI reply couldn't be read, using rules only.")
+                    ai_flags, team_fb = [], rule_fb
+                for f in ai_flags:
+                    f["source"] = "AI"
+                # Backstop: add anything the rules caught that the AI missed
+                found = {(f["type"], f["student"]) for f in ai_flags}
+                missed = [dict(f, source="rules backstop") for f in rule_flags
+                          if (f["type"], f["student"]) not in found]
+                team_flags = ai_flags + missed
+            total_cost += cost
+            for f in team_flags:
+                f["team"] = team
+                f["id"] = f"{team}|{f['type']}|{f['student']}"
+            flags += team_flags
+            feedback.update({(team, name): text for name, text in team_fb.items()})
+            extra = sum(f["source"] == "rules backstop" for f in team_flags)
+            st.write(f"✅ Team {team}: {len(team_flags)} flag(s)"
+                     + (f" ({extra} added by the rules backstop)" if extra else ""))
+
+        st.write("**Step 4:** Saving the flags report...")
+        status.update(label="Agent finished! Review the results below.",
+                      state="complete", expanded=False)
+
+    st.session_state["run_id"] = st.session_state.get("run_id", 0) + 1
+    st.session_state["results"] = {
+        "df": df, "grades": grades, "grades_before": grades_before,
+        "outliers": outliers, "flags": flags, "feedback": feedback,
+        "cost": total_cost, "calls": calls, "mock": mock_mode,
+        "group_grade": group_grade, "problems": problems,
+    }
+    with open(REPORT_FILE, "w") as f:
+        f.write(build_report(st.session_state["results"], {}))
+
+
+def build_report(results, decisions):
+    lines = ["PEER EVALUATION FLAGS REPORT", "=" * 40,
+             f"Group grade: {results['group_grade']:g}",
+             f"Mode: {'mock (rules)' if results['mock'] else MODEL}",
+             f"Total API cost: ${results['cost']:.6f}", ""]
+    if results["outliers"]:
+        lines.append("Ratings left out (retaliation check):")
+        for (team, evaluator), gap in results["outliers"].items():
+            lines.append(f"  Team {team}: {evaluator} ({abs(gap)} points below teammates)")
+        lines.append("")
+    for team in sorted(results["grades"]["team"].unique()):
+        lines.append(f"Team {team}")
+        team_flags = [f for f in results["flags"] if f["team"] == team]
+        if not team_flags:
+            lines.append("  No flags.")
+        for f in team_flags:
+            d = decisions.get(f["id"], "Pending")
+            lines.append(f"  [{f['type'].upper()}] {f['student']}: {f['evidence']}  "
+                         f"(found by {f['source']}) -> {d.upper()}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+if run:
+    try:
+        run_agent(source, group_grade, mock_mode)
+    except requests.HTTPError as e:
+        st.error(f"OpenRouter request failed: {e.response.status_code} "
+                 f"{e.response.text[:300]}")
+    except Exception as e:
+        st.error(f"Something went wrong: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+results = st.session_state.get("results")
+if not results:
+    st.stop()
+
+rid = st.session_state["run_id"]  # makes widget keys fresh for every run
+
+# Streamlit forgets a widget's value when it isn't on screen. Re-saving these keys
+# keeps review decisions and feedback approvals when you switch views.
+for key in list(st.session_state.keys()):
+    if key.startswith(("flag_", "floor_", "fbtext_", "fbok_")):
+        st.session_state[key] = st.session_state[key]
+gg = results["group_grade"]
+flags = results["flags"]
+base_grades = results["grades"]
+
+# Professor decisions (read from the review widgets below)
+decisions = {f["id"]: st.session_state.get(f"flag_{rid}_{f['id']}", "Pending") for f in flags}
+floor_students = base_grades[base_grades["below_floor"]]["student"].tolist()
+floor_choice = {s: st.session_state.get(f"floor_{rid}_{s}", "Pending") for s in floor_students}
+confirmed = {s for s, c in floor_choice.items() if c.startswith("Confirm")}
+
+grades = g.apply_floor_decisions(base_grades, confirmed)
+excluded_by_team = {}
+for (team, evaluator) in results["outliers"]:
+    excluded_by_team.setdefault(team, []).append(evaluator)
+grades["explanation"] = [g.explain(row, gg, excluded_by_team.get(row["team"], []), confirmed)
+                         for _, row in grades.iterrows()]
+
+pending = (sum(d == "Pending" for d in decisions.values())
+           + sum(c == "Pending" for c in floor_choice.values()))
+total_items = len(decisions) + len(floor_choice)
+
+st.divider()
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Students", len(grades))
+m2.metric("Flags raised", len(flags))
+m3.metric("Still to review", pending)
+m4.metric("API cost this run", f"${results['cost']:.4f}")
+
+# A view switcher (it remembers its choice when you click things, unlike st.tabs)
+VIEWS = ["📊 Grades", "🛡️ Retaliation fix", "✅ Review queue", "✉️ Feedback drafts", "💰 Cost"]
+view = st.segmented_control("View", VIEWS, default=VIEWS[0], key="view",
+                            label_visibility="collapsed") or VIEWS[0]
+
+# ---- Grades ---------------------------------------------------------------
+if view == VIEWS[0]:
+    chart_height = max(400, 30 * len(grades))  # room for every student's name
+    left, right = st.columns([1, 1])
+    with left:
+        st.subheader("Adjusted grades")
+        st.dataframe(grades[["team", "student", "avg_received", "team_avg",
+                             "calculated_grade", "adjusted_grade"]],
+                     hide_index=True, width="stretch", height=chart_height)
+    with right:
+        st.subheader("Grades by student")
+        st.bar_chart(grades, x="student", y="adjusted_grade", color="team",
+                     horizontal=True, height=chart_height)
+
+    st.subheader("💬 Why each student got their grade")
+    for team, rows in grades.groupby("team"):
+        with st.expander(f"Team {team}"):
+            for _, row in rows.iterrows():
+                st.markdown(f"**{row['student']} — {row['adjusted_grade']}**  \n"
+                            f"{row['explanation']}")
+
+# ---- Retaliation fix ------------------------------------------------------
+if view == VIEWS[1]:
+    st.markdown(f"<div class='note'>Evaluators who score teammates <b>{g.OUTLIER_GAP}+ points "
+                "below</b> what the rest of the team gave the same people are left out. "
+                f"No grade can fall below <b>50% of the group grade ({g.FLOOR_SHARE * gg:g})</b> "
+                "unless you confirm it in the Review queue.</div>", unsafe_allow_html=True)
+    if not results["outliers"]:
+        st.success("No evaluators were left out.")
+    for team in sorted(excluded_by_team):
+        st.subheader(f"Team {team}: before and after")
+        st.caption(f"Left out: {', '.join(excluded_by_team[team])}")
+        before = results["grades_before"]
+        before = before[before["team"] == team][["student", "avg_received", "adjusted_grade"]]
+        after = grades[grades["team"] == team][["student", "avg_received", "adjusted_grade"]]
+        compare = before.merge(after, on="student", suffixes=(" before", " after"))
+        compare["change"] = (compare["adjusted_grade after"]
+                             - compare["adjusted_grade before"]).round(1)
+        st.dataframe(compare, hide_index=True, width="stretch")
+        chart = compare.melt(id_vars="student",
+                             value_vars=["adjusted_grade before", "adjusted_grade after"],
+                             var_name="version", value_name="grade")
+        st.bar_chart(chart, x="student", y="grade", color="version", stack=False, height=300)
+
+# ---- Review queue ---------------------------------------------------------
+if view == VIEWS[2]:
+    st.write(f"**{total_items - pending} of {total_items} reviewed.** The grades file unlocks "
+             "when everything below is reviewed.")
+    st.progress((total_items - pending) / total_items if total_items else 1.0)
+
+    if floor_students:
+        st.subheader("Grades below the 50% floor")
+        for s in floor_students:
+            row = grades[grades["student"] == s].iloc[0]
+            st.radio(f"**{s}** (Team {row['team']}): calculated {row['calculated_grade']}, "
+                     f"floor {g.FLOOR_SHARE * gg:g}",
+                     ["Pending", f"Keep at floor ({g.FLOOR_SHARE * gg:g})",
+                      f"Confirm lower grade ({row['calculated_grade']})"],
+                     key=f"floor_{rid}_{s}", horizontal=True)
+
+    st.subheader("Flags")
+    if not flags:
+        st.success("No flags to review.")
+    for f in flags:
+        with st.container(border=True):
+            st.markdown(f"<span class='flag-type'>{html.escape(f['type'].replace('_', ' '))}"
+                        f"</span> &nbsp; Team {html.escape(f['team'])} · "
+                        f"<i>found by {html.escape(f['source'])}</i> · "
+                        f"<b>{html.escape(f['student'])}</b><br>{html.escape(f['evidence'])}",
+                        unsafe_allow_html=True)
+            st.radio("Decision", ["Pending", "Approve", "Override"],
+                     key=f"flag_{rid}_{f['id']}", horizontal=True,
+                     label_visibility="collapsed")
+
+    report = build_report(results, decisions)
+    out = grades.copy()
+    out["floor_status"] = ["" if not r["below_floor"] else
+                           ("confirmed lower grade" if r["student"] in confirmed
+                            else "kept at floor")
+                           for _, r in out.iterrows()]
+    out["approved_flags"] = ["; ".join(f["type"] for f in flags
+                                       if decisions[f["id"]] == "Approve"
+                                       and f["student"] in (r["student"], ai.WHOLE_TEAM)
+                                       and f["team"] == r["team"])
+                             for _, r in out.iterrows()]
+    out = out.drop(columns=["below_floor"])
+
+    d1, d2 = st.columns(2)
+    if pending == 0:
+        out.to_csv(GRADES_FILE, index=False)
+        with open(REPORT_FILE, "w") as fh:
+            fh.write(report)
+        d1.download_button("⬇️ Download adjusted_grades.csv", out.to_csv(index=False),
+                           GRADES_FILE, "text/csv", width="stretch", type="primary")
+    else:
+        d1.button(f"🔒 adjusted_grades.csv — review {pending} more item(s)",
+                  disabled=True, width="stretch")
+    d2.download_button("⬇️ Download flags_report.txt", report, REPORT_FILE, "text/plain",
+                       width="stretch")
+
+# ---- Feedback drafts ------------------------------------------------------
+if view == VIEWS[3]:
+    st.markdown("<div class='note'>📭 <b>Nothing is ever sent.</b> This app cannot email or "
+                "message anyone. Edit and approve the drafts, then download the approved ones "
+                "to share yourself.</div>", unsafe_allow_html=True)
+    approved = []
+    for team, rows in grades.groupby("team"):
+        st.subheader(f"Team {team}")
+        for _, row in rows.iterrows():
+            name = row["student"]
+            key = f"fbtext_{rid}_{team}_{name}"
+            if key not in st.session_state:  # first time: start from the draft
+                st.session_state[key] = results["feedback"].get((team, name), "") or "(no draft)"
+            text = st.text_area(name, key=key, height=120)
+            if st.checkbox("Approve", key=f"fbok_{rid}_{team}_{name}"):
+                approved.append(f"To: {name} (Team {team})\n{text}\n")
+    st.write(f"**{len(approved)} of {len(grades)} drafts approved.**")
+    st.download_button("⬇️ Download approved feedback", "\n".join(approved) or "None approved.",
+                       "approved_feedback.txt", "text/plain", disabled=not approved)
+
+# ---- Cost -----------------------------------------------------------------
+if view == VIEWS[4]:
+    paid = PAID_TOOL_PRICE * len(grades)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("This run", f"${results['cost']:.4f}",
+              help="Reported by OpenRouter. Mock mode is always $0.")
+    c2.metric(f"Paid tool (${PAID_TOOL_PRICE:.2f} × {len(grades)} students)", f"${paid:,.2f}")
+    c3.metric("You save", f"${paid - results['cost']:,.2f}")
+    mode = ("mock mode (no API calls)" if results["mock"]
+            else f"{results['calls']} call(s) to {MODEL}")
+    st.caption(f"This run used {mode}. Limits: {ai.MAX_API_CALLS_PER_RUN} calls and "
+               f"${ai.MAX_COST_PER_RUN:.2f} per run.")
