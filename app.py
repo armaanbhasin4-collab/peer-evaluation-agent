@@ -24,6 +24,8 @@ import grading as g
 load_dotenv()  # reads OPENROUTER_API_KEY and OPENROUTER_MODEL from .env
 API_KEY, MODEL = ai.get_settings()
 
+SAMPLE_FILE = "evaluations.csv"
+SAMPLE_TEAM_GRADES = "team_grades.csv"
 STRESS_FILE = "stress_test.csv"
 STRESS_TEAM_GRADES = "stress_team_grades.csv"
 GRADE_LABEL = "Project grade (before peer adjustment)"
@@ -75,33 +77,48 @@ st.write("Upload your students' peer evaluations, set each team's project grade,
 col1, col2 = st.columns([1, 1])
 with col1:
     uploaded = st.file_uploader("Peer evaluations CSV", type="csv")
-    if st.button("🧪 Load stress-test data"):
-        st.session_state["use_stress"] = True
+    b1, b2 = st.columns(2)
+    if b1.button("📄 Load sample data", width="stretch"):
+        st.session_state["demo"] = "sample"
+    if b2.button("🧪 Load stress-test data", width="stretch"):
+        st.session_state["demo"] = "stress"
 with col2:
     grades_upload = st.file_uploader("Optional: team_grades.csv (columns: team, grade)",
                                      type="csv")
 
-# Which evaluations file to use
+# Built-in data you can load with one click (no upload needed)
+DEMOS = {
+    "sample": {"evaluations": SAMPLE_FILE, "team_grades": SAMPLE_TEAM_GRADES,
+               "note": "the clean sample: 20 students in 5 teams with different "
+                       "project grades."},
+    "stress": {"evaluations": STRESS_FILE, "team_grades": STRESS_TEAM_GRADES,
+               "note": "every edge case: freeloader, retaliation, prompt injections, "
+                       "collusion, score/comment mismatch, self-inflation, bad scores, "
+                       "duplicates, blank rows, and messy team grades."},
+}
+demo = DEMOS.get(st.session_state.get("demo"))
+
+# Which evaluations file to use (an upload always wins)
 source = None
 if uploaded is not None:
     source, source_name, source_id = uploaded, uploaded.name, uploaded.file_id
-elif st.session_state.get("use_stress"):
-    source, source_name, source_id = STRESS_FILE, STRESS_FILE, STRESS_FILE
+elif demo:
+    source = source_name = source_id = demo["evaluations"]
 
-# Which team grades file to use (the stress test comes with its own)
+# Which team grades file to use (built-in data comes with its own)
 grades_source, grades_id = None, "defaults"
 if grades_upload is not None:
     grades_source, grades_id = grades_upload, grades_upload.file_id
-elif source is not None and source_name == STRESS_FILE:
-    grades_source, grades_id = STRESS_TEAM_GRADES, STRESS_TEAM_GRADES
+elif demo and uploaded is None:
+    grades_source = grades_id = demo["team_grades"]
 
 team_grades = None
 if source is not None:
-    st.info(f"Using **{source_name}**"
-            + (f" and **{STRESS_TEAM_GRADES}** — every edge case: freeloader, retaliation, "
-               "prompt injections, collusion, score/comment mismatch, self-inflation, bad "
-               "scores, duplicates, blank rows, and messy team grades."
-               if source_name == STRESS_FILE and grades_upload is None else ""))
+    if demo and uploaded is None and grades_upload is None:
+        st.info(f"Using **{source_name}** and **{grades_source}** — {demo['note']}")
+    else:
+        st.info(f"Using **{source_name}**"
+                + (f" and **{grades_upload.name}**" if grades_upload is not None else ""))
     try:
         preview_df, _ = g.load_evaluations(source)
         teams = sorted(preview_df["team"].unique())
@@ -140,7 +157,7 @@ run = st.button("🤖 Run Agent", type="primary", disabled=team_grades is None)
 # The agent
 # ---------------------------------------------------------------------------
 
-def run_agent(source, team_grades, mock_mode):
+def run_agent(source, source_id, team_grades, mock_mode):
     with st.status("Agent is working...", expanded=True) as status:
         st.write("**Step 1:** Loading and cleaning the CSV...")
         df, problems = g.load_evaluations(source)
@@ -205,7 +222,7 @@ def run_agent(source, team_grades, mock_mode):
         "df": df, "grades": grades, "grades_before": grades_before,
         "outliers": outliers, "flags": flags, "feedback": feedback,
         "cost": total_cost, "calls": calls, "mock": mock_mode,
-        "team_grades": team_grades, "problems": problems,
+        "team_grades": team_grades, "problems": problems, "source_id": source_id,
     }
     with open(REPORT_FILE, "w") as f:
         f.write(build_report(st.session_state["results"], {}))
@@ -237,7 +254,7 @@ def build_report(results, decisions):
 
 if run:
     try:
-        run_agent(source, team_grades, mock_mode)
+        run_agent(source, source_id, team_grades, mock_mode)
     except requests.HTTPError as e:
         st.error(f"OpenRouter request failed: {e.response.status_code} "
                  f"{e.response.text[:300]}")
@@ -250,6 +267,10 @@ if run:
 # ---------------------------------------------------------------------------
 
 results = st.session_state.get("results")
+# Results from a different evaluations file are out of date: hide them
+if results and (source is None or results.get("source_id") != source_id):
+    st.session_state.pop("results")
+    results = None
 if not results:
     st.stop()
 

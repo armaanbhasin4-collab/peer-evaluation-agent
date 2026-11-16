@@ -19,6 +19,9 @@ streamlit run app.py
 Your browser opens at http://localhost:8501. The app starts in **mock mode**:
 flags and feedback come from simple built-in rules, and it costs nothing.
 
+To try it without uploading anything, click **📄 Load sample data**, then
+**Run Agent**. This loads `evaluations.csv` with its `team_grades.csv`.
+
 ### Turning on the real AI (optional)
 
 1. Get an API key at https://openrouter.ai/keys.
