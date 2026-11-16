@@ -44,7 +44,7 @@ ui.inject_css()
 # ---------------------------------------------------------------------------
 
 with st.sidebar:
-    st.markdown("### ⚙️ Settings")
+    st.markdown("### 🧪 Mode")
     if API_KEY:
         mock_mode = st.toggle("Mock mode (free, no API calls)", value=True)
         st.success("OpenRouter key found", icon="🔑")
@@ -55,12 +55,16 @@ with st.sidebar:
         st.info("No OpenRouter key yet, so the app runs in free mock mode.", icon="🔑")
         with st.expander("How to add your key"):
             st.markdown(
-                "Get a key at [openrouter.ai/keys](https://openrouter.ai/keys), then:\n\n"
-                "**On Streamlit Cloud:** open your app → **⋮ → Settings → Secrets** and "
-                "paste:\n```toml\nOPENROUTER_API_KEY = \"sk-or-...\"\n```\n"
-                "**On your computer:** copy `.env.example` to `.env` and put your key "
-                "after `OPENROUTER_API_KEY=`.\n\n"
-                "Then reload the app. Never put the key in the code or on GitHub.")
+                "Get a key at [openrouter.ai/keys](https://openrouter.ai/keys). The key is "
+                "added outside this app:\n\n"
+                "**App online (address ends in .streamlit.app):**\n"
+                "1. In a new tab, open [share.streamlit.io](https://share.streamlit.io)\n"
+                "2. On this app's row, click **⋮** → **Settings** → **Secrets**\n"
+                "3. Paste the line below with your key, then **Save**\n"
+                "```toml\nOPENROUTER_API_KEY = \"sk-or-...\"\n```\n"
+                "**App on your computer:** copy `.env.example` to `.env` and put your "
+                "key after `OPENROUTER_API_KEY=`, then restart.\n\n"
+                "Never put the key in the code or on GitHub.")
     st.caption("Mock mode uses simple built-in rules. Real mode sends each team's comments "
                f"to **{MODEL}** via OpenRouter." if not mock_mode or API_KEY else
                "Mock mode uses simple built-in rules. Nothing leaves your computer.")
