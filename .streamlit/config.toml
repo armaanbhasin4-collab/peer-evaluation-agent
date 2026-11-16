@@ -1,7 +1,20 @@
+# GroupGrade theme: cream notebook paper, red pen, ink blue, pencil yellow.
+# Custom touches (ruled lines, index cards, gradebook) live in ui.py.
+
 [theme]
 base = "light"
-primaryColor = "#4F46E5"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F3F4FF"
-textColor = "#1F2937"
-font = "sans serif"
+primaryColor = "#C2402A"              # red pen
+backgroundColor = "#FBF8F1"           # cream paper
+secondaryBackgroundColor = "#F3EFE3"
+textColor = "#1F2A3A"
+linkColor = "#2A55B8"                 # ink blue
+borderColor = "#E4DCC8"
+dataframeHeaderBackgroundColor = "#F3EFE3"
+chartCategoricalColors = ["#2A55B8", "#C2402A"]
+baseRadius = "0.6rem"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+headingFont = "Fraunces:https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap"
+
+[theme.sidebar]
+backgroundColor = "#F3EFE3"
+secondaryBackgroundColor = "#FBF8F1"

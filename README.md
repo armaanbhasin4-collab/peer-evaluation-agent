@@ -1,6 +1,6 @@
-# Peer Evaluation Agent
+# GroupGrade
 
-A small Streamlit app that replaces a paid peer-evaluation tool. Upload your
+GroupGrade is a small Streamlit app that replaces a paid peer-evaluation tool. Upload your
 students' peer evaluations, set each team's project grade, and click **Run Agent**. The
 agent computes fair individual grades, flags problems, and drafts feedback. You
 review everything before anything is final, and nothing is ever sent to students.
@@ -141,8 +141,8 @@ A real run on the 32-student stress-test file costs about half a cent.
 | File | Purpose |
 |---|---|
 | `app.py` | The web page: what happens on each step |
-| `ui.py` | The look: colors, fonts, cards and badges |
-| `charts.py` | The charts (Altair, with colorblind-checked team colors) |
+| `ui.py` | The look: notebook paper, chalkboard header, index cards, gradebook |
+| `charts.py` | The charts (Altair, in red pen and ink blue) |
 | `grading.py` | Grade math, retaliation fix, floor, explanations (no AI) |
 | `ai_review.py` | Mock rules, OpenRouter calls, API limits |
 | `evaluations.csv` | Sample data: 20 students, 5 teams |
@@ -159,7 +159,7 @@ These are from mock mode with the built-in sample data.
 **Start:** load data and set each team's project grade
 ![](docs/screenshots/1_start.png)
 
-**Grades:** final grades per student, with each team's project grade as a dark tick
+**Grades:** red-pen and ink-blue chart, team overview and the gradebook
 ![](docs/screenshots/2_grades.png)
 
 **Retaliation fix:** grades before and after leaving out a spiteful evaluator

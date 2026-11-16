@@ -1,6 +1,6 @@
 """
-Peer Evaluation Agent
----------------------
+GroupGrade - peer evaluation agent
+----------------------------------
 Upload peer evaluations, set each team's project grade, click "Run Agent".
 
 Files:
@@ -35,7 +35,7 @@ GRADES_FILE = "adjusted_grades.csv"
 REPORT_FILE = "flags_report.txt"
 PAID_TOOL_PRICE = 9.50  # dollars per student for the paid peer-evaluation tool
 
-st.set_page_config(page_title="Peer Evaluation Agent", page_icon="📝", layout="wide")
+st.set_page_config(page_title="GroupGrade", page_icon="📝", layout="wide")
 ui.inject_css()
 
 
@@ -339,13 +339,13 @@ with steps_slot:
 
 st.markdown("## Results")
 ui.stat_cards([
-    ("👥", "#EEF2FF", "Students graded", len(grades),
+    ("👥", "#E7ECF8", "Students graded", len(grades),
      f"{grades['team'].nunique()} teams"),
-    ("🎓", "#F0FDF4", "Average final grade", f"{grades['adjusted_grade'].mean():.1f}",
+    ("🎓", "#FDF1D2", "Average final grade", f"{grades['adjusted_grade'].mean():.1f}",
      f"lowest {grades['adjusted_grade'].min():g} · highest {grades['adjusted_grade'].max():g}"),
-    ("📝", "#FEF3C7", "Left to review", pending,
+    ("📝", "#F9E1DC", "Left to review", pending,
      "all done, grades unlocked ✓" if pending == 0 else f"of {total_items} items"),
-    ("💸", "#DCFCE7", "You save", f"${paid - results['cost']:,.0f}",
+    ("💸", "#E3EEF0", "You save", f"${paid - results['cost']:,.0f}",
      f"vs. ${PAID_TOOL_PRICE:.2f}/student tool"),
 ])
 
@@ -361,9 +361,9 @@ if view == VIEWS[0]:
     with left:
         with st.container(border=True):
             st.markdown("### Final grades")
-            st.caption("Bars show each student's final grade. The dark tick is the team's "
-                       "project grade, so you can see who landed above or below it. "
-                       "Hover a bar for details.")
+            st.caption("Ink blue bars landed at or above the team's project grade, red pen "
+                       "bars below it. The dark tick marks the project grade. Hover a bar "
+                       "for details.")
             st.altair_chart(charts.grades_chart(grades), width="stretch", theme=None)
     with right:
         with st.container(border=True):
@@ -374,15 +374,7 @@ if view == VIEWS[0]:
                              lowest=("adjusted_grade", "min"))
                         .reset_index())
             overview["flags"] = [sum(f["team"] == t for f in flags) for t in overview["team"]]
-            st.dataframe(overview, hide_index=True, width="stretch",
-                         column_config={
-                             "team": "Team", "project": st.column_config.NumberColumn(
-                                 "Project", format="%.0f"),
-                             "average": st.column_config.NumberColumn("Avg final",
-                                                                      format="%.1f"),
-                             "lowest": st.column_config.NumberColumn("Lowest",
-                                                                     format="%.1f"),
-                             "flags": "Flags"})
+            ui.team_gradebook(overview)
         if flags:
             with st.container(border=True):
                 st.markdown("### Flags by kind")
@@ -390,21 +382,13 @@ if view == VIEWS[0]:
                                 theme=None)
 
     with st.container(border=True):
-        st.markdown("### 💬 Why each student got their grade")
-        for team, rows in grades.groupby("team"):
-            with st.expander(f"Team {team}  ·  project grade {rows['project_grade'].iloc[0]:g}"):
-                for _, row in rows.iterrows():
-                    ui.student_line(row["student"], row["adjusted_grade"], row["explanation"])
+        st.markdown("### 📒 Gradebook")
+        ui.gradebook(grades)
 
-    with st.expander("📋 All grades as a table"):
-        st.dataframe(grades[["team", "student", "project_grade", "avg_received", "team_avg",
-                             "calculated_grade", "adjusted_grade"]],
-                     hide_index=True, width="stretch",
-                     column_config={
-                         "team": "Team", "student": "Student",
-                         "project_grade": "Project grade", "avg_received": "Avg received",
-                         "team_avg": "Team avg", "calculated_grade": "Calculated",
-                         "adjusted_grade": "Final grade"})
+    st.markdown("### 💬 Why each student got their grade")
+    for team, rows in grades.groupby("team"):
+        with st.expander(f"Team {team}  ·  project grade {rows['project_grade'].iloc[0]:g}"):
+            ui.explanation_cards(rows)
 
 # ---- Retaliation fix ------------------------------------------------------
 if view == VIEWS[1]:
@@ -456,8 +440,10 @@ if view == VIEWS[2]:
     st.markdown("### 🚩 Flags")
     if not flags:
         ui.callout("✅ No flags to review.", "green")
-    for f in flags:
-        with st.container(border=True):
+    if flags:
+        ui.scribble("every call is yours to make")
+    for i, f in enumerate(flags):
+        with st.container(border=True, key=f"flagcard_{rid}_{i}"):
             ui.flag_header(f)
             st.radio("Decision", ["Pending", "Approve", "Override"],
                      key=f"flag_{rid}_{f['id']}", horizontal=True,
@@ -499,6 +485,7 @@ if view == VIEWS[3]:
                "Edit and approve the drafts, then download the approved ones to share "
                "yourself.")
     approved = []
+    card = 0
     for team, rows in grades.groupby("team"):
         st.markdown(f"### Team {team}")
         cols = st.columns(2)
@@ -507,8 +494,9 @@ if view == VIEWS[3]:
             key = f"fbtext_{rid}_{team}_{name}"
             if key not in st.session_state:  # first time: start from the draft
                 st.session_state[key] = results["feedback"].get((team, name), "") or "(no draft)"
+            card += 1
             with cols[i % 2]:
-                with st.container(border=True):
+                with st.container(border=True, key=f"fbcard_{rid}_{card}"):
                     text = st.text_area(f"✉️ {name}", key=key, height=130)
                     if st.checkbox("Approve", key=f"fbok_{rid}_{team}_{name}"):
                         approved.append(f"To: {name} (Team {team})\n{text}\n")
@@ -524,10 +512,10 @@ if view == VIEWS[4]:
     mode = ("mock mode (no API calls)" if results["mock"]
             else f"{results['calls']} call(s) to {MODEL}")
     ui.stat_cards([
-        ("🧾", "#EEF2FF", "This run", f"${results['cost']:.4f}", mode),
-        ("🏷️", "#FEE2E2", "Paid tool", f"${paid:,.2f}",
+        ("🧾", "#E7ECF8", "This run", f"${results['cost']:.4f}", mode),
+        ("🏷️", "#F9E1DC", "Paid tool", f"${paid:,.2f}",
          f"${PAID_TOOL_PRICE:.2f} × {len(grades)} students"),
-        ("📞", "#F1F5F9", "AI calls", results["calls"],
+        ("📞", "#F3EFE3", "AI calls", results["calls"],
          f"limit {ai.MAX_API_CALLS_PER_RUN} per run"),
-        ("🛑", "#FEF3C7", "Spending cap", f"${ai.MAX_COST_PER_RUN:.2f}", "per run"),
+        ("🛑", "#FDF1D2", "Spending cap", f"${ai.MAX_COST_PER_RUN:.2f}", "per run"),
     ])
