@@ -1,7 +1,7 @@
 # Peer Evaluation Agent
 
 A small Streamlit app that replaces a paid peer-evaluation tool. Upload your
-students' peer evaluations, enter the group grade, and click **Run Agent**. The
+students' peer evaluations, set each team's project grade, and click **Run Agent**. The
 agent computes fair individual grades, flags problems, and drafts feedback. You
 review everything before anything is final, and nothing is ever sent to students.
 
@@ -31,6 +31,30 @@ flags and feedback come from simple built-in rules, and it costs nothing.
 `.env` is listed in `.gitignore`, so your key is never committed. The default model
 is `anthropic/claude-haiku-5.5`. You can change it with `OPENROUTER_MODEL` in `.env`.
 
+## Project grades for each team
+
+Different teams can earn different project grades. After you upload the
+evaluations, the app shows a **Project grades** table with one row per team found
+in the CSV. Each team's **Project grade (before peer adjustment)** starts at 85, and
+you can click any grade to change it.
+
+To fill the whole table at once, also upload a `team_grades.csv`:
+
+```
+team,grade
+Alpha,92
+Beta,78
+```
+
+- Team names must match the evaluations exactly, including capitals.
+- Grades are numbers from 0 to 100.
+- Teams missing from the file stay at 85.
+- If a team is listed twice, the last grade is used.
+- Bad rows and unknown teams are skipped, with a warning.
+
+You can still edit the table after uploading the file.
+`team_grades.csv` in this repo is a sample that matches `evaluations.csv`.
+
 ### Run the checks
 
 ```bash
@@ -44,8 +68,9 @@ python test_grading.py
    count toward grades.
 2. **Retaliation fix.** If an evaluator scores teammates **1.5+ points below**
    what the rest of the team gave the same people, their ratings are left out.
-3. **Grades.** `group grade × (student avg ÷ team avg)`, capped at 100. No grade
-   can drop below **50% of the group grade** unless you confirm it.
+3. **Grades.** `team's project grade × (student avg ÷ team avg)`, capped at 100.
+   No grade can drop below **50% of the team's own project grade** unless you
+   confirm it. For example, a Beta student with project grade 78 has a floor of 39.
 4. **Review comments.** Each team is checked for freeloaders, retaliation,
    manipulation attempts, collusion, score/comment mismatches and
    self-inflation. Feedback drafts are written at the same time.
@@ -63,9 +88,14 @@ The page has five views:
 | ✉️ Feedback drafts | Editable drafts, each needing approval; download approved ones |
 | 💰 Cost | This run's API cost vs. the paid tool ($9.50 × number of students) |
 
-Click **🧪 Load stress-test data** to try `stress_test.csv`, which contains every
-edge case: a freeloader, a spiteful evaluator, two prompt injections, a colluding
-team, a "did nothing" comment next to a 5, a self-inflating student, and broken rows.
+Click **🧪 Load stress-test data** to try `stress_test.csv` together with
+`stress_team_grades.csv`. Together they contain every edge case:
+- a freeloader, a spiteful evaluator, and two prompt injections
+- a colluding team, a "did nothing" comment next to a 5, and a self-inflating student
+- broken rows in the evaluations
+- messy team grades: an out-of-range grade, a non-number, a blank team, a duplicate
+  team, a wrongly capitalized team, an unknown team, and two teams with no grade
+- a team graded 100, to test the cap, and a team graded 40, to test a low floor
 
 ## Safety
 
@@ -100,18 +130,24 @@ A real run on the 32-student stress-test file costs about half a cent.
 | `grading.py` | Grade math, retaliation fix, floor, explanations (no AI) |
 | `ai_review.py` | Mock rules, OpenRouter calls, API limits |
 | `evaluations.csv` | Sample data: 20 students, 5 teams |
+| `team_grades.csv` | Sample project grades for those 5 teams (all different) |
 | `stress_test.csv` | Every edge case: 32 students, 8 teams |
+| `stress_team_grades.csv` | Messy team grades for the stress test |
 | `test_grading.py` | Quick checks |
-| `docs/screenshots/` | Screenshots from a real run |
+| `docs/screenshots/` | Screenshots of the app |
 
 ## Screenshots
 
+Screenshots marked *(mock)* are from mock mode; the rest are from a real AI run.
+
 | | |
 |---|---|
-| Retaliation fix | ![](docs/screenshots/1_retaliation_fix.png) |
+| Project grades table *(mock)* | ![](docs/screenshots/0_project_grades.png) |
+| Grades with per-team project grades *(mock)* | ![](docs/screenshots/3_grades_table_chart.png) |
+| Retaliation fix *(mock)* | ![](docs/screenshots/1_retaliation_fix.png) |
 | Flags and review queue | ![](docs/screenshots/2_4a_flags_review_locked.png) |
-| Grade explanations | ![](docs/screenshots/3_explanations.png) |
-| Grades file unlocked | ![](docs/screenshots/4b_review_unlocked.png) |
+| Grade explanations *(mock)* | ![](docs/screenshots/3_explanations.png) |
+| Grades file unlocked *(mock)* | ![](docs/screenshots/4b_review_unlocked.png) |
 | Feedback drafts | ![](docs/screenshots/5_feedback.png) |
 | Cost | ![](docs/screenshots/6_cost.png) |
-| Stress-test button | ![](docs/screenshots/7_stress_button.png) |
+| Stress-test data and team grade warnings *(mock)* | ![](docs/screenshots/7_stress_button.png) |

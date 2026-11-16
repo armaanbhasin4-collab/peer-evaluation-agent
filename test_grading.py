@@ -15,8 +15,9 @@ assert len(problems) == 4, problems
 assert list(outliers) == [("Gamma", "Kenji")], outliers
 
 # Team Gamma before and after leaving Kenji out
-before = g.compute_grades(df, 85)
-after = g.compute_grades(df, 85, exclude=outliers)
+# With no team grades, every team uses the default of 85
+before = g.compute_grades(df, {})
+after = g.compute_grades(df, {}, exclude=outliers)
 gamma_before = dict(before[before.team == "Gamma"][["student", "adjusted_grade"]].values)
 gamma_after = dict(after[after.team == "Gamma"][["student", "adjusted_grade"]].values)
 assert set(gamma_before.values()) == {85.0}
@@ -25,11 +26,34 @@ assert gamma_after == {"Isla": 91.1, "Jamal": 91.1, "Kenji": 66.8, "Lena": 91.1}
 # Floor: Hank is held at 42.5 until the professor confirms 28.3
 hank = after[after.student == "Hank"].iloc[0]
 assert hank.below_floor and hank.calculated_grade == 28.3 and hank.adjusted_grade == 42.5
-confirmed = g.apply_floor_decisions(after, {"Hank"})
+confirmed = g.apply_floor_decisions(after, {("Beta", "Hank")})
 assert confirmed[confirmed.student == "Hank"].iloc[0].adjusted_grade == 28.3
 
 # Cap at 100
 assert after.adjusted_grade.max() == 100
+
+# Per-team project grades from the messy stress-test grades file
+teams = sorted(df.team.unique())
+team_grades, grade_problems = g.load_team_grades("stress_team_grades.csv", teams)
+assert team_grades == {"Alpha": 90, "Beta": 78, "Delta": 88, "Epsilon": 100, "Eta": 40,
+                       "Gamma": 70, "Theta": 85, "Zeta": 85}, team_grades
+assert len(grade_problems) == 6, grade_problems  # bad rows, duplicate, unknown, missing
+
+graded = g.compute_grades(df, team_grades, exclude=outliers)
+row = lambda name: graded[graded.student == name].iloc[0]
+assert row("Hank").project_grade == 78 and row("Hank").calculated_grade == 26.0
+assert row("Hank").floor == 39 and row("Hank").adjusted_grade == 39  # 50% of 78
+assert row("Kenji").adjusted_grade == 55.0                           # 70 x 0.79
+assert row("Sam").adjusted_grade == 100                              # 100 x 1.11, capped
+assert row("Aiden").floor == 20 and not row("Aiden").below_floor     # 29.4 is above 20
+text = g.explain(row("Hank"), [], set())
+assert "project grade is 78" in text and "held at 39" in text, text
+
+# The sample team_grades.csv matches the sample evaluations exactly
+sample, _ = g.load_evaluations("evaluations.csv")
+sample_grades, sample_problems = g.load_team_grades("team_grades.csv",
+                                                    sorted(sample.team.unique()))
+assert sample_problems == [] and len(set(sample_grades.values())) == 5
 
 # Mock rules catch every planted case
 found = set()

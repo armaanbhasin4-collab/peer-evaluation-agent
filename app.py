@@ -13,6 +13,7 @@ Run it with:   streamlit run app.py
 
 import html
 
+import pandas as pd
 import requests
 import streamlit as st
 from dotenv import load_dotenv
@@ -24,6 +25,8 @@ load_dotenv()  # reads OPENROUTER_API_KEY and OPENROUTER_MODEL from .env
 API_KEY, MODEL = ai.get_settings()
 
 STRESS_FILE = "stress_test.csv"
+STRESS_TEAM_GRADES = "stress_team_grades.csv"
+GRADE_LABEL = "Project grade (before peer adjustment)"
 GRADES_FILE = "adjusted_grades.csv"
 REPORT_FILE = "flags_report.txt"
 PAID_TOOL_PRICE = 9.50  # dollars per student for the paid peer-evaluation tool
@@ -66,37 +69,78 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 
 st.title("📝 Peer Evaluation Agent")
-st.write("Upload your students' peer evaluations, enter the group grade, and let the agent "
-         "compute fair grades, flag problems, and draft feedback for you to review.")
+st.write("Upload your students' peer evaluations, set each team's project grade, and let "
+         "the agent compute fair grades, flag problems, and draft feedback for you to review.")
 
-col1, col2 = st.columns([2, 1])
+col1, col2 = st.columns([1, 1])
 with col1:
     uploaded = st.file_uploader("Peer evaluations CSV", type="csv")
     if st.button("🧪 Load stress-test data"):
         st.session_state["use_stress"] = True
 with col2:
-    group_grade = st.number_input("Group grade", min_value=0.0, max_value=100.0,
-                                  value=85.0, step=1.0)
+    grades_upload = st.file_uploader("Optional: team_grades.csv (columns: team, grade)",
+                                     type="csv")
 
+# Which evaluations file to use
 source = None
 if uploaded is not None:
-    source, source_name = uploaded, uploaded.name
+    source, source_name, source_id = uploaded, uploaded.name, uploaded.file_id
 elif st.session_state.get("use_stress"):
-    source, source_name = STRESS_FILE, STRESS_FILE
+    source, source_name, source_id = STRESS_FILE, STRESS_FILE, STRESS_FILE
+
+# Which team grades file to use (the stress test comes with its own)
+grades_source, grades_id = None, "defaults"
+if grades_upload is not None:
+    grades_source, grades_id = grades_upload, grades_upload.file_id
+elif source is not None and source_name == STRESS_FILE:
+    grades_source, grades_id = STRESS_TEAM_GRADES, STRESS_TEAM_GRADES
+
+team_grades = None
 if source is not None:
     st.info(f"Using **{source_name}**"
-            + (" — every edge case: freeloader, retaliation, prompt injections, collusion, "
-               "score/comment mismatch, self-inflation, bad scores, duplicates, blank rows."
-               if source_name == STRESS_FILE else ""))
+            + (f" and **{STRESS_TEAM_GRADES}** — every edge case: freeloader, retaliation, "
+               "prompt injections, collusion, score/comment mismatch, self-inflation, bad "
+               "scores, duplicates, blank rows, and messy team grades."
+               if source_name == STRESS_FILE and grades_upload is None else ""))
+    try:
+        preview_df, _ = g.load_evaluations(source)
+        teams = sorted(preview_df["team"].unique())
+        if grades_source is not None:
+            filled, grade_problems = g.load_team_grades(grades_source, teams)
+            for p in grade_problems:
+                st.warning(p, icon="⚠️")
+        else:
+            filled = {t: g.DEFAULT_PROJECT_GRADE for t in teams}
 
-run = st.button("🤖 Run Agent", type="primary", disabled=source is None)
+        st.subheader("Project grades")
+        st.caption(f"One row per team found in the CSV. Edit any grade; teams start at "
+                   f"{g.DEFAULT_PROJECT_GRADE:g} unless team_grades.csv sets them.")
+        table = pd.DataFrame({"team": teams, GRADE_LABEL: [filled[t] for t in teams]})
+        edited = st.data_editor(
+            table, hide_index=True, num_rows="fixed", disabled=["team"],
+            # a new evaluations or team grades file starts a fresh table
+            key=f"grades_editor_{source_id}_{grades_id}",
+            column_config={
+                "team": st.column_config.TextColumn("Team"),
+                GRADE_LABEL: st.column_config.NumberColumn(
+                    GRADE_LABEL, min_value=0.0, max_value=100.0, step=0.5,
+                    format="%.1f", required=True),
+            })
+        if edited[GRADE_LABEL].isna().any():
+            st.error("Every team needs a project grade from 0 to 100.")
+        else:
+            team_grades = dict(zip(edited["team"], edited[GRADE_LABEL].astype(float)))
+    except Exception as e:
+        st.error(f"Could not read the file: {e}")
+
+run = st.button("🤖 Run Agent", type="primary", disabled=team_grades is None)
 
 
 # ---------------------------------------------------------------------------
 # The agent
 # ---------------------------------------------------------------------------
 
-def run_agent(source, group_grade, mock_mode):
+def run_agent(source, team_grades, mock_mode):
     with st.status("Agent is working...", expanded=True) as status:
         st.write("**Step 1:** Loading and cleaning the CSV...")
         df, problems = g.load_evaluations(source)
@@ -107,8 +151,8 @@ def run_agent(source, group_grade, mock_mode):
 
         st.write("**Step 2:** Checking for retaliation and computing grades...")
         outliers = g.find_outlier_evaluators(df)
-        grades_before = g.compute_grades(df, group_grade)
-        grades = g.compute_grades(df, group_grade, exclude=outliers)
+        grades_before = g.compute_grades(df, team_grades)
+        grades = g.compute_grades(df, team_grades, exclude=outliers)
         for (team, evaluator), gap in outliers.items():
             st.write(f"⚠️ Left out {evaluator}'s ratings (team {team}): "
                      f"{abs(gap)} points below teammates.")
@@ -161,7 +205,7 @@ def run_agent(source, group_grade, mock_mode):
         "df": df, "grades": grades, "grades_before": grades_before,
         "outliers": outliers, "flags": flags, "feedback": feedback,
         "cost": total_cost, "calls": calls, "mock": mock_mode,
-        "group_grade": group_grade, "problems": problems,
+        "team_grades": team_grades, "problems": problems,
     }
     with open(REPORT_FILE, "w") as f:
         f.write(build_report(st.session_state["results"], {}))
@@ -169,7 +213,8 @@ def run_agent(source, group_grade, mock_mode):
 
 def build_report(results, decisions):
     lines = ["PEER EVALUATION FLAGS REPORT", "=" * 40,
-             f"Group grade: {results['group_grade']:g}",
+             "Project grades (before peer adjustment): " + ", ".join(f"{t} {v:g}" for t, v in
+                                             sorted(results["team_grades"].items())),
              f"Mode: {'mock (rules)' if results['mock'] else MODEL}",
              f"Total API cost: ${results['cost']:.6f}", ""]
     if results["outliers"]:
@@ -192,7 +237,7 @@ def build_report(results, decisions):
 
 if run:
     try:
-        run_agent(source, group_grade, mock_mode)
+        run_agent(source, team_grades, mock_mode)
     except requests.HTTPError as e:
         st.error(f"OpenRouter request failed: {e.response.status_code} "
                  f"{e.response.text[:300]}")
@@ -215,21 +260,23 @@ rid = st.session_state["run_id"]  # makes widget keys fresh for every run
 for key in list(st.session_state.keys()):
     if key.startswith(("flag_", "floor_", "fbtext_", "fbok_")):
         st.session_state[key] = st.session_state[key]
-gg = results["group_grade"]
 flags = results["flags"]
 base_grades = results["grades"]
 
 # Professor decisions (read from the review widgets below)
 decisions = {f["id"]: st.session_state.get(f"flag_{rid}_{f['id']}", "Pending") for f in flags}
-floor_students = base_grades[base_grades["below_floor"]]["student"].tolist()
-floor_choice = {s: st.session_state.get(f"floor_{rid}_{s}", "Pending") for s in floor_students}
-confirmed = {s for s, c in floor_choice.items() if c.startswith("Confirm")}
+# Grades below the floor, as (team, student) pairs
+floor_students = list(base_grades[base_grades["below_floor"]][["team", "student"]]
+                      .itertuples(index=False, name=None))
+floor_choice = {(t, s): st.session_state.get(f"floor_{rid}_{t}_{s}", "Pending")
+                for t, s in floor_students}
+confirmed = {key for key, c in floor_choice.items() if c.startswith("Confirm")}
 
 grades = g.apply_floor_decisions(base_grades, confirmed)
 excluded_by_team = {}
 for (team, evaluator) in results["outliers"]:
     excluded_by_team.setdefault(team, []).append(evaluator)
-grades["explanation"] = [g.explain(row, gg, excluded_by_team.get(row["team"], []), confirmed)
+grades["explanation"] = [g.explain(row, excluded_by_team.get(row["team"], []), confirmed)
                          for _, row in grades.iterrows()]
 
 pending = (sum(d == "Pending" for d in decisions.values())
@@ -251,12 +298,17 @@ view = st.segmented_control("View", VIEWS, default=VIEWS[0], key="view",
 # ---- Grades ---------------------------------------------------------------
 if view == VIEWS[0]:
     chart_height = max(400, 30 * len(grades))  # room for every student's name
-    left, right = st.columns([1, 1])
+    left, right = st.columns([3, 2])
     with left:
         st.subheader("Adjusted grades")
-        st.dataframe(grades[["team", "student", "avg_received", "team_avg",
+        st.dataframe(grades[["team", "student", "project_grade", "avg_received", "team_avg",
                              "calculated_grade", "adjusted_grade"]],
-                     hide_index=True, width="stretch", height=chart_height)
+                     hide_index=True, width="stretch", height=chart_height,
+                     column_config={  # short headers so every column fits
+                         "team": "Team", "student": "Student",
+                         "project_grade": "Project grade", "avg_received": "Avg received",
+                         "team_avg": "Team avg", "calculated_grade": "Calculated",
+                         "adjusted_grade": "Final grade"})
     with right:
         st.subheader("Grades by student")
         st.bar_chart(grades, x="student", y="adjusted_grade", color="team",
@@ -273,7 +325,7 @@ if view == VIEWS[0]:
 if view == VIEWS[1]:
     st.markdown(f"<div class='note'>Evaluators who score teammates <b>{g.OUTLIER_GAP}+ points "
                 "below</b> what the rest of the team gave the same people are left out. "
-                f"No grade can fall below <b>50% of the group grade ({g.FLOOR_SHARE * gg:g})</b> "
+                "No grade can fall below <b>50% of its team's project grade</b> "
                 "unless you confirm it in the Review queue.</div>", unsafe_allow_html=True)
     if not results["outliers"]:
         st.success("No evaluators were left out.")
@@ -300,13 +352,13 @@ if view == VIEWS[2]:
 
     if floor_students:
         st.subheader("Grades below the 50% floor")
-        for s in floor_students:
-            row = grades[grades["student"] == s].iloc[0]
-            st.radio(f"**{s}** (Team {row['team']}): calculated {row['calculated_grade']}, "
-                     f"floor {g.FLOOR_SHARE * gg:g}",
-                     ["Pending", f"Keep at floor ({g.FLOOR_SHARE * gg:g})",
+        for t, s in floor_students:
+            row = grades[(grades["team"] == t) & (grades["student"] == s)].iloc[0]
+            st.radio(f"**{s}** (Team {t}, project grade {row['project_grade']:g}): "
+                     f"calculated {row['calculated_grade']}, floor {row['floor']:g}",
+                     ["Pending", f"Keep at floor ({row['floor']:g})",
                       f"Confirm lower grade ({row['calculated_grade']})"],
-                     key=f"floor_{rid}_{s}", horizontal=True)
+                     key=f"floor_{rid}_{t}_{s}", horizontal=True)
 
     st.subheader("Flags")
     if not flags:
@@ -325,7 +377,7 @@ if view == VIEWS[2]:
     report = build_report(results, decisions)
     out = grades.copy()
     out["floor_status"] = ["" if not r["below_floor"] else
-                           ("confirmed lower grade" if r["student"] in confirmed
+                           ("confirmed lower grade" if (r["team"], r["student"]) in confirmed
                             else "kept at floor")
                            for _, r in out.iterrows()]
     out["approved_flags"] = ["; ".join(f["type"] for f in flags
@@ -333,7 +385,9 @@ if view == VIEWS[2]:
                                        and f["student"] in (r["student"], ai.WHOLE_TEAM)
                                        and f["team"] == r["team"])
                              for _, r in out.iterrows()]
-    out = out.drop(columns=["below_floor"])
+    out = out[["team", "student", "project_grade", "avg_received", "ratings_used",
+               "team_avg", "ratio", "calculated_grade", "floor", "adjusted_grade",
+               "floor_status", "approved_flags", "explanation"]]
 
     d1, d2 = st.columns(2)
     if pending == 0:
