@@ -229,5 +229,20 @@ def read_json(text):
 
 
 def get_settings():
-    return os.getenv("OPENROUTER_API_KEY", ""), os.getenv("OPENROUTER_MODEL",
-                                                          "anthropic/claude-haiku-5.5")
+    """
+    Find the OpenRouter key and model. Looks in two places:
+      * environment variables / the .env file (running on your computer)
+      * Streamlit secrets (running on Streamlit Community Cloud)
+    Returns (key, model). The key is "" if none was found.
+    """
+    key = os.getenv("OPENROUTER_API_KEY", "")
+    model = os.getenv("OPENROUTER_MODEL", "")
+    try:
+        import streamlit as st
+        key = key or st.secrets.get("OPENROUTER_API_KEY", "")
+        model = model or st.secrets.get("OPENROUTER_MODEL", "")
+    except Exception:  # no secrets file: that's fine
+        pass
+    if key.strip() in ("", "your-key-here"):  # the placeholder from .env.example
+        key = ""
+    return key.strip(), model or "anthropic/claude-haiku-5.5"

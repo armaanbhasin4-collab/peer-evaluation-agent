@@ -31,7 +31,18 @@ To try it without uploading anything, click **📄 Load sample data**, then
    ```
 3. Restart the app and switch off **Mock mode** in the sidebar.
 
-`.env` is listed in `.gitignore`, so your key is never committed. The default model
+**On Streamlit Community Cloud**, don't use `.env`. Open your app → **⋮ → Settings →
+Secrets** and paste:
+
+```toml
+OPENROUTER_API_KEY = "sk-or-your-key-here"
+```
+
+The app finds the key in either place. Without a key it stays in free mock mode, and
+the sidebar explains how to add one.
+
+`.env` and `.streamlit/secrets.toml` are listed in `.gitignore`, so your key is never
+committed. The default model
 is `anthropic/claude-haiku-5.5`. You can change it with `OPENROUTER_MODEL` in `.env`.
 
 ## Project grades for each team
@@ -129,7 +140,9 @@ A real run on the 32-student stress-test file costs about half a cent.
 
 | File | Purpose |
 |---|---|
-| `app.py` | The web page |
+| `app.py` | The web page: what happens on each step |
+| `ui.py` | The look: colors, fonts, cards and badges |
+| `charts.py` | The charts (Altair, with colorblind-checked team colors) |
 | `grading.py` | Grade math, retaliation fix, floor, explanations (no AI) |
 | `ai_review.py` | Mock rules, OpenRouter calls, API limits |
 | `evaluations.csv` | Sample data: 20 students, 5 teams |
@@ -141,16 +154,22 @@ A real run on the 32-student stress-test file costs about half a cent.
 
 ## Screenshots
 
-Screenshots marked *(mock)* are from mock mode; the rest are from a real AI run.
+These are from mock mode with the built-in sample data.
 
-| | |
-|---|---|
-| Project grades table *(mock)* | ![](docs/screenshots/0_project_grades.png) |
-| Grades with per-team project grades *(mock)* | ![](docs/screenshots/3_grades_table_chart.png) |
-| Retaliation fix *(mock)* | ![](docs/screenshots/1_retaliation_fix.png) |
-| Flags and review queue | ![](docs/screenshots/2_4a_flags_review_locked.png) |
-| Grade explanations *(mock)* | ![](docs/screenshots/3_explanations.png) |
-| Grades file unlocked *(mock)* | ![](docs/screenshots/4b_review_unlocked.png) |
-| Feedback drafts | ![](docs/screenshots/5_feedback.png) |
-| Cost | ![](docs/screenshots/6_cost.png) |
-| Stress-test data loaded *(mock)* | ![](docs/screenshots/7_stress_button.png) |
+**Start:** load data and set each team's project grade
+![](docs/screenshots/1_start.png)
+
+**Grades:** final grades per student, with each team's project grade as a dark tick
+![](docs/screenshots/2_grades.png)
+
+**Retaliation fix:** grades before and after leaving out a spiteful evaluator
+![](docs/screenshots/3_retaliation_fix.png)
+
+**Review queue:** approve or override every flag before the grades file unlocks
+![](docs/screenshots/4_review_queue.png)
+
+**Feedback drafts:** edit and approve; nothing is ever sent
+![](docs/screenshots/5_feedback.png)
+
+**Cost:** this run vs. the paid tool
+![](docs/screenshots/6_cost.png)
