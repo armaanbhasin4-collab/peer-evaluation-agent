@@ -67,6 +67,19 @@ expected = {("freeloader", "Hank"), ("retaliation", "Kenji"), ("manipulation", "
             ("self_inflation", "Eli")}
 assert expected <= found, expected - found
 
+# Each flag explains its effect on grades with the real numbers
+import impact
+before_tg = g.compute_grades(df, team_grades)
+def effect(kind, student, team):
+    return impact.flag_impact({"type": kind, "student": student, "team": team},
+                              df, graded, before_tg, team_grades, outliers)
+assert "held at 39" in effect("freeloader", "Hank", "Beta")["text"]
+assert "Isla 70 → 75 (+5.0)" in effect("retaliation", "Kenji", "Gamma")["text"]
+assert effect("manipulation", "Noah", "Delta")["short"].startswith("no effect")
+assert effect("self_inflation", "Eli", "Theta")["short"].startswith("no effect")
+assert "all 4 got the project grade (85)" in effect("collusion", ai.WHOLE_TEAM, "Zeta")["short"]
+assert "would be 20.9 instead of 29.4" in effect("mismatch", "Zane", "Eta")["text"]
+
 # The AI reply reader never crashes on junk
 assert ai.read_json("not json") is None
 assert ai.clean_flags([{"type": "hack", "student": "Hank"}, "junk"], {"Hank"}) == []

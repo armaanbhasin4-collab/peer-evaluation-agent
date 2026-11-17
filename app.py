@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 import ai_review as ai
 import charts
 import grading as g
+import impact
 import ui
 
 load_dotenv()  # reads OPENROUTER_API_KEY and OPENROUTER_MODEL from .env
@@ -244,6 +245,19 @@ def run_agent(source, source_id, team_grades, mock_mode):
             st.write(f"✅ Team {team}: {len(team_flags)} flag(s)"
                      + (f" ({extra} added by the rules backstop)" if extra else ""))
 
+        # How each flag affected grades (from the grade math, not the AI)
+        for f in flags:
+            effect = impact.flag_impact(f, df, grades, grades_before, team_grades, outliers)
+            f["impact_short"], f["impact"] = effect["short"], effect["text"]
+        if flags:
+            st.write("**What the agent found:**")
+            for f in flags:
+                icon, name = ui.FLAG_STYLES.get(f["type"], ("🚩", f["type"]))[:2]
+                st.write(f"{icon} **{name}**: {f['student']} (team {f['team']}) — "
+                         f"{f['impact_short']}")
+        else:
+            st.write("✅ No problems found.")
+
         st.write("**Step 4:** Saving the flags report...")
         status.update(label="Agent finished! Review the results below.",
                       state="complete", expanded=False)
@@ -279,6 +293,7 @@ def build_report(results, decisions):
             d = decisions.get(f["id"], "Pending")
             lines.append(f"  [{f['type'].upper()}] {f['student']}: {f['evidence']}  "
                          f"(found by {f['source']}) -> {d.upper()}")
+            lines.append(f"      Effect on grade: {f.get('impact', '')}")
         lines.append("")
     return "\n".join(lines)
 
@@ -352,6 +367,11 @@ ui.stat_cards([
     ("💸", "#E3EEF0", "You save", f"${paid - results['cost']:,.0f}",
      f"vs. ${PAID_TOOL_PRICE:.2f}/student tool"),
 ])
+
+# What the agent found: every flag, the student, and how it affected the grade
+with st.expander(f"🚩 What the agent found: {len(flags)} flag(s)" if flags
+                 else "✅ What the agent found: no problems", expanded=True):
+    ui.findings(flags)
 
 # A view switcher (it remembers its choice when you click things, unlike st.tabs)
 VIEWS = ["📊 Grades", "🛡️ Retaliation fix", "✅ Review queue", "✉️ Feedback drafts", "💰 Cost"]

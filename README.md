@@ -87,7 +87,11 @@ python test_grading.py
    confirm it. For example, a Beta student with project grade 78 has a floor of 39.
 4. **Review comments.** Each team is checked for freeloaders, retaliation,
    manipulation attempts, collusion, score/comment mismatches and
-   self-inflation. Feedback drafts are written at the same time.
+   self-inflation. Feedback drafts are written at the same time. A **What the agent
+   found** list shows every flag with the student's name and its **effect on
+   grades**, worked out from the grade math. For example, "Hank: 78 × 0.33 = 26.0, held
+   at the floor of 39", or "Kenji's ratings left out: Isla 70 → 75". Some flags, like
+   manipulation and self-inflation, say plainly that they changed no grade.
 5. **You review.** Approve or override every flag, and decide on any grade below
    the floor. `adjusted_grades.csv` can only be downloaded once everything is
    reviewed.

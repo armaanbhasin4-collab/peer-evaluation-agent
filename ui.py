@@ -164,6 +164,16 @@ h1, h2, h3, h4 {{ font-family: 'Fraunces', Georgia, serif; color: {INK_TEXT};
 .evidence {{ font-family: 'Inter', sans-serif; color: #33404F; margin: .45rem 0 .1rem 0;
              font-size: .94rem; }}
 
+/* ---- What the agent found ---- */
+.findings {{ font-family: 'Inter', sans-serif; }}
+.finding {{ padding: .7rem 0 .75rem; border-bottom: 1px solid rgba(42,85,184,.14); }}
+.finding:last-child {{ border-bottom: none; }}
+.finding .why {{ color: #33404F; font-size: .9rem; margin-top: .35rem; }}
+.effect {{ font-family: 'Inter', sans-serif; color: {INK_TEXT}; font-size: .9rem;
+           margin-top: .3rem; background: #FFF6D9; border-left: 3px solid {PENCIL};
+           padding: .35rem .6rem; border-radius: 4px; }}
+.effect b {{ color: {RED_PEN}; }}
+
 /* ---- Index cards (explanations) ---- */
 .cards {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: .9rem;
           margin-bottom: .4rem; }}
@@ -281,8 +291,30 @@ def flag_header(flag):
         f'<span class="who">{html.escape(flag["student"])}</span>'
         f'<span class="meta">· Team {html.escape(flag["team"])} · found by '
         f'{html.escape(flag["source"])}</span></div>'
-        f'<div class="evidence">{html.escape(flag["evidence"])}</div>',
+        f'<div class="evidence">{html.escape(flag["evidence"])}</div>'
+        f'<div class="effect"><b>Effect on grade:</b> '
+        f'{html.escape(flag.get("impact", ""))}</div>',
         unsafe_allow_html=True)
+
+
+def findings(flags):
+    """One line per flag: what kind, which student, why, and the effect on grades."""
+    if not flags:
+        callout("✅ The agent found no freeloaders, spite, manipulation, collusion, "
+                "mismatched scores or self-inflation.", "green")
+        return
+    items = []
+    for f in flags:
+        icon, name, bg, fg = FLAG_STYLES.get(f["type"], ("🚩", f["type"], SIDEBAR, INK_TEXT))
+        items.append(
+            f'<div class="finding"><div class="flag-head">'
+            f'<span class="pill" style="background:{bg};color:{fg}">{icon} {name}</span>'
+            f'<span class="who">{html.escape(f["student"])}</span>'
+            f'<span class="meta">· Team {html.escape(f["team"])}</span></div>'
+            f'<div class="why"><b>Why flagged:</b> {html.escape(f["evidence"])}</div>'
+            f'<div class="effect"><b>Effect on grade:</b> '
+            f'{html.escape(f.get("impact", ""))}</div></div>')
+    st.markdown(f'<div class="findings">{"".join(items)}</div>', unsafe_allow_html=True)
 
 
 def savings_card(saved, paid, cost, students):
