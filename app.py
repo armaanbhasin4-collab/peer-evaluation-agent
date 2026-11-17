@@ -43,6 +43,7 @@ GRADE_LABEL = "Project grade (before peer adjustment)"
 GRADES_FILE = "adjusted_grades.csv"
 REPORT_FILE = "flags_report.txt"
 PAID_TOOL_PRICE = 9.50  # dollars per student for the paid peer-evaluation tool
+VIEWS = ["📊 Grades", "🛡️ Retaliation fix", "✅ Review queue", "✉️ Feedback drafts", "💰 Cost"]
 
 st.set_page_config(page_title="GroupGrade", page_icon="📝", layout="wide")
 ui.inject_css()
@@ -271,6 +272,7 @@ def run_agent(source, source_id, team_grades, mock_mode):
                       state="complete", expanded=False)
 
     st.session_state["run_id"] = st.session_state.get("run_id", 0) + 1
+    st.session_state["view"] = VIEWS[0]  # every new run opens on the Grades view
     st.session_state["results"] = {
         "df": df, "grades": grades, "grades_before": grades_before,
         "outliers": outliers, "flags": flags, "feedback": feedback,
@@ -382,7 +384,7 @@ with st.expander(f"🚩 What the agent found: {len(flags)} flag(s)" if flags
     ui.findings(flags)
 
 # A view switcher (it remembers its choice when you click things, unlike st.tabs)
-VIEWS = ["📊 Grades", "🛡️ Retaliation fix", "✅ Review queue", "✉️ Feedback drafts", "💰 Cost"]
+st.markdown("#### Choose what to see")
 view = st.segmented_control("View", VIEWS, default=VIEWS[0], key="view", required=True,
                             label_visibility="collapsed") or VIEWS[0]
 flag_names = {k: v[1] for k, v in ui.FLAG_STYLES.items()}
