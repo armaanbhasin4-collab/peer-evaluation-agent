@@ -13,6 +13,8 @@ Files:
 Run it with:   streamlit run app.py
 """
 
+import importlib
+
 import pandas as pd
 import requests
 import streamlit as st
@@ -23,6 +25,12 @@ import charts
 import grading as g
 import impact
 import ui
+
+# After an update, Streamlit Cloud can keep old copies of these files in memory,
+# which causes errors like "module 'ui' has no attribute ...". Reloading them on
+# every run makes sure the app always uses the latest version.
+for module in (g, ai, impact, charts, ui):
+    importlib.reload(module)
 
 load_dotenv()  # reads OPENROUTER_API_KEY and OPENROUTER_MODEL from .env
 API_KEY, MODEL = ai.get_settings()
